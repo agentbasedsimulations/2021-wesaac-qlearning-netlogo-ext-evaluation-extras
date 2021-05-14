@@ -1,0 +1,255 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; A simple vehicle that follows a straight path, from source to destination.
+; At each timestep, the vehicle moves one step forward in the
+; direction of its movement (NORTH-SOUTH or EAST-WEST).
+; When arriving at the limit of the world, the vehicle dies.
+;
+; The vehicles' movement follows the NetLogo HB-SOTL model of 
+; Pedro S. Rodriguez-Hernandez & Juan C. Burguillo-Rial. 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+globals [
+	acceleration  	; The acceleration of vehicles
+	speed_limit  	; The speed limit for vehicles
+	number_of_vehicles  	; The number of vehicles
+	verticalSourceNodes; 
+	horizontalSourceNodes; 
+	sinkNodes; 
+	verticalInsertionAtEvery
+	horizontalInsertionAtEvery
+]
+
+breed [Vehicles Vehicle]
+
+Vehicles-own[
+	speed  	      ; Speed of the vehicle
+	trip_time  	  ; The overall time taken by the vehicle to complete its trip
+	waiting_time  ; The overall time waited by the vehicle to complete its trip
+	v_car?  	    ; Required by the movement behavior. Whether the vehicle moves vertically (or horizontally)
+	path          ; The path of GraphNodes that the vehicle will follow. The vehicle dies when it reaches the last node
+]
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Setup Vehicle agents.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to vehiclesSetup
+  initVehicleGlobals   
+  initSourcesAndSinkNodes
+  createNewVehicles		
+end
+
+to initVehicleGlobals
+	set acceleration 0.099    			; default is 0.0999
+	set speed_limit 1          			; default is 1
+	set number_of_vehicles 500  		; default is 500
+	; Custom demand, adapted after saturation tests
+	set verticalInsertionAtEvery 4 ; at every 4 seconds, insert a vehicle; total 15 vehi/min = 900 vehi/hour
+	set horizontalInsertionAtEvery 15; at every 15 seconds, insert a vehicle: total 4 vehi/min = 240 vehi/hour
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Activates the behavior of each Vehicle agent.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to vehiclesGo
+  createNewVehicles 		; to create new vehicles at each timestep
+  moveVehicles		      ; to move the vehicles through the traffic network
+end
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Move the Vehicles throught the traffic network.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to moveVehicles
+  foreach sort-on [who] vehicles [ v ->
+    ask v [
+      ;ask vehicles [
+      ; face the vehicle to the next node it must move to
+      let target first path
+      
+      if patch-here = [patch-here] of target [
+        set path remove-item 0 path
+        if empty? path [ die ]
+        set target first path
+      ]
+      face target
+      
+      setVehicleSpeed
+      ifelse can-move? speed[
+        fd speed
+      ][
+        die
+      ]
+      updateVehicleAttributes
+    ]
+  ]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Update Vehicle attributes according to the 
+;; action taken and according to the current
+;; conditions of the traffic network.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to updateVehicleAttributes
+  if speed = 0[
+    set waiting_time waiting_time + 1
+  ]
+  set trip_time trip_time + 1
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Sets the Vehicle speed based on either the red/yellow
+;; traffic light in front of it, or in the speed of the 
+;; Vehicle in from of it.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to setVehicleSpeed 
+  ifelse [pcolor] of patch-here = red or [pcolor] of patch-here = yellow[
+    set speed 0
+    move-to patch-here
+  ][
+    updateSpeed
+  ]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Updates the 'speed' of the Vehicle based on whether
+;; there are cars in front of the Vehicle, and
+;; considering the 'speed_limit' parameter.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to updateSpeed
+  let up-cars?-ahead 0
+  let cars-ahead 0
+  
+  let ahead_position 1; the position that the vehicle wants to move
+  if [pcolor] of patch-here = green [ 
+    ; if the vehicle is about to cross an intersection, it must
+    ; ensure that there is an empty patch ahead of the insersection.
+    ; Otherwise, it will block the intersection
+    set ahead_position 2
+  ]
+  
+  ;; get the cars on the patch in front of the car, if there is such a patch (i.e., the vehicle is not on the borders)
+  let patch-in-front patch-ahead ahead_position
+  if patch-in-front != nobody[
+     ask patch-ahead ahead_position
+       [ set cars-ahead vehicles-here ]
+    
+     ;; if there are cars in front of the car, slow down;  otherwise, speed up
+     ifelse any? cars-ahead [
+       set up-cars?-ahead [v_car?] of cars-ahead
+      ; if there is at least one car in the same direction that myself
+      ; and at least one car in the opposite direction (in short, if there are
+      ; cars passing by or stopped at a shared patch (an intersection)
+       ifelse member? v_car? up-cars?-ahead and member? (not v_car?) up-cars?-ahead [
+          set speed 0 
+       ] [
+         set speed [speed] of one-of cars-ahead
+         slowDown
+       ]
+     ]
+     [ speedUp ]
+  ]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Decrease the speed of the Vehicle
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to slowDown  ;; car procedure
+  set speed speed - acceleration
+  if speed < 0  ;;if speed < 0
+    [ set speed 0 ]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Increase the speed of the Vehicle
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to speedUp  ;; car procedure
+  set speed speed + acceleration
+  if speed > speed_limit
+    [ set speed speed_limit ]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Determines the number of Vehicles that must
+;; be created in order to have 'number_of_vehicles' Vehicles
+;; and create them at random source nodes.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to createNewVehicles
+	if count Vehicles < number_of_vehicles [
+		; Vertical insertion
+		ask verticalSourceNodes with [not any? Vehicles-here][
+			if (ticks mod verticalInsertionAtEvery) = 0 [
+				createVehicle self true
+			]
+		]
+    
+		; Horizontal insertion
+		ask horizontalSourceNodes with [not any? Vehicles-here][
+			if (ticks mod horizontalInsertionAtEvery) = 0 [
+				createVehicle self false
+			]
+		]
+	]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Creates a new Vehicle in the same patch of
+;; the given 'initialNode' and sets its direction
+;; of movement according to the 'vertical?' argument
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to createVehicle [initialNode vertical?]
+  ask [patch-here] of initialNode [
+      sprout-vehicles 1 [ 
+         set v_car? vertical?
+         set shape "car"
+         set color cyan
+         ifelse v_car? [
+           set heading 180 ; SOUTH
+         ][
+           set heading 90 ; EAST
+         ]
+      
+        ; computing the target sink node according to the car direction (vertical or horizontal)
+        let targetNode nobody
+        ifelse v_car? [
+          set targetNode one-of sinkNodes with [pxcor = [pxcor] of myself]
+        ][
+          set targetNode one-of sinkNodes with [pycor = [pycor] of myself]
+        ]
+        set path findPath one-of GraphNodes-on patch-here targetNode
+      
+        set acceleration speed_limit
+        setVehicleSpeed
+      ] 
+   ]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Helper procedures
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Finds and initialize source and sink patches.
+;; They are the patches at the top/left and 
+;; botton/right edges of the world.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to initSourcesAndSinkNodes
+	let verticalSourcePatches patches with [( pycor = max-pycor ) and pcolor = black] 			; top patches
+	let horizontalSourcePatches patches with [(pxcor = min-pxcor ) and pcolor = black] 			; left patches
+	let sinkPatches patches with [( pycor = min-pycor or pxcor = max-pxcor) and pcolor = black] ; bottom and right patches
+	set verticalSourceNodes GraphNodes-on verticalSourcePatches
+	set horizontalSourceNodes GraphNodes-on horizontalSourcePatches
+	set sinkNodes GraphNodes-on sinkPatches
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Finds a path of nodes between the given
+;; source and target nodes.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to-report findPath [sourceNode targetNode]
+  let aPath []
+  ask sourceNode[
+    set aPath nw:turtles-on-path-to targetNode
+  ]
+  report aPath
+end

@@ -1,0 +1,144 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; Procedures to manipulate a traffic network and to report its conditions.
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Creates a traffic network from an OSM file
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to createTrafficNetworkFromOsm [osmFile nodeBreed linkBreed]
+  ask patches [ set pcolor white]
+  osmnlogo:load osmFile nodeBreed linkBreed
+  ask linkBreed [ colorLinkPatches self black]
+  ask nodeBreed [ 
+    set shape "dot" 
+    ; sort inlinks and outlinks clockwise
+		set inlinks sort-by 
+                       [ [link1 link2] ->
+                             (atan ([pxcor] of ([end1] of link1) - pxcor) ([pycor] of ([end1] of link1) - pycor))
+                             <
+                             (atan ([pxcor] of ([end1] of link2) - pxcor) ([pycor] of ([end1] of link2) - pycor))
+                       ]
+                       inlinks
+                       
+    set outlinks sort-by 
+                       [ [link1 link2] ->
+			                       (atan ([pxcor] of ([end2] of link1) - pxcor) ([pycor] of ([end2] of link1) - pycor))
+	                           <
+         	                   (atan ([pxcor] of ([end2] of link2) - pxcor) ([pycor] of ([end2] of link2) - pycor))
+       		             ]
+                       outlinks
+  ]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Calculates and reports the queue length 
+;; (stopped vehicles) at the given GraphLink link.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to-report queueLength [ aGraphLink ]
+   let counter 0
+   ; find all patches under the given link
+   let link_patches patchesUnderLink aGraphLink
+   
+   foreach link_patches [ [lnk] ->
+      set counter counter + count (turtles-on lnk ) with [ osmnlogo:has-variable "speed" and osmnlogo:variable-value "speed" = 0]
+   ]  
+   report counter
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Procedures that find and manipulate the patches that are under a given link.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Apply the given color on all patches 
+;; under the given link.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to colorLinkPatches [aGraphLink aColor]
+  foreach (patchesUnderLink aGraphLink) [ [p] -> ask p [set pcolor aColor]]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Finds all patches under the given link.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to-report patchesUnderLink [aLink]
+  let ilx [xcor] of [end1] of aLink ;;initial link x
+  let ily [ycor] of [end1] of aLink ;;initial link y
+  let flx [xcor] of [end2] of aLink ;;final link x
+  let fly [ycor] of [end2] of aLink ;;final link y
+
+  let x-var flx - ilx ;;diference in x
+  let y-var fly - ily ;;diference in y
+  let x-dist abs x-var ;;absolute distance in x
+  let y-dist abs y-var ;;absolute distance in y
+  let result []
+  let add 1
+  let offset 0
+
+  ifelse x-dist > y-dist [
+    if isNegative x-var
+      [set add -1]
+
+    repeat x-dist + 1 [
+      let posx ilx + offset
+      set result lput (patch (posx) (yLine posx aLink)) result
+      set offset offset + add
+    ]
+  ]
+  [
+    if isNegative y-var
+      [set add -1]
+
+    repeat (y-dist + 1) [
+      let posy ily + offset
+      set result lput (patch (xLine posy aLink) (posy)) result
+      set offset offset + add
+    ]
+  ]
+  report result
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Given a 'x' coordinate, compute its 'y' coordinate
+;; considering the line represented by the given Link.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to-report yLine [x aLink]
+  let x1 [xcor] of [end1] of aLink ;;initial link x
+  let y1 [ycor] of [end1] of aLink ;;initial link y
+  let x2 [xcor] of [end2] of aLink ;;final link x
+  let y2 [ycor] of [end2] of aLink ;;final link y
+  if (x2 - x1) = 0 [report y1]
+  let m ((y2 - y1) / (x2 - x1))
+  let b (y1 - (m * x1))
+  let y ((m * x) + b)
+  report y
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Given a 'y' coordinate, compute its 'x' coordinate
+;; considering the line represented by the given Link.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to-report xLine [y aLink]
+  let x1 [xcor] of [end1] of aLink ;;initial link x
+  let y1 [ycor] of [end1] of aLink ;;initial link y
+  let x2 [xcor] of [end2] of aLink ;;final link x
+  let y2 [ycor] of [end2] of aLink ;;final link y
+  if (y2 - y1) = 0 [report x1]
+  let m ((x2 - x1) / (y2 - y1))
+  let b (x1 - (m * y1))
+  let x ((m * y) + b)
+  report x
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Checks whether the given number is negative.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to-report isNegative [number]
+  ifelse number < 0
+    [ report true ]
+    [ report false ]
+end
+
